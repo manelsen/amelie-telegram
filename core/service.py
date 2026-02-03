@@ -1,6 +1,5 @@
 import re
 import logging
-import logging
 from ports.interfaces import AIModelPort
 from core.exceptions import VisionBotError, transientAPIError, PermanentAPIError
 
@@ -42,7 +41,8 @@ class VisionService:
                 prefix = "Análise de PDF"
             else:
                 prefix = "Análise de Documento"
-                
+            
+            logger.info(f"Processamento concluído com sucesso para o tipo: {mime_type}")
             return f"{prefix}: {clean_result}"
 
         except transientAPIError as e:
