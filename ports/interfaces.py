@@ -5,7 +5,8 @@ class MessagingPort(ABC):
     """
     Interface para adaptadores de mensagens (ex: Telegram, Discord).
     
-    Define os contratos básicos para envio de mensagens e inicialização do serviço.
+    Define os contratos básicos para envio de mensagens, inicialização do serviço
+    e gestão de fluxos interativos (como botões).
     """
     @abstractmethod
     def start(self):
@@ -33,13 +34,6 @@ class AIModelPort(ABC):
     async def upload_file(self, content_bytes: bytes, mime_type: str) -> str:
         """
         Realiza o upload de um arquivo para o provedor de IA.
-        
-        Args:
-            content_bytes: Conteúdo bruto do arquivo em bytes.
-            mime_type: Tipo MIME do arquivo.
-            
-        Returns:
-            str: URI ou identificador do arquivo no cache do provedor.
         """
         pass
 
@@ -47,15 +41,6 @@ class AIModelPort(ABC):
     async def ask_about_file(self, file_uri: str, mime_type: str, prompt: str, history: list = None) -> str:
         """
         Faz uma pergunta contextual sobre um arquivo previamente enviado.
-        
-        Args:
-            file_uri: URI do arquivo no cache da IA.
-            mime_type: Tipo do arquivo.
-            prompt: Pergunta do usuário.
-            history: Histórico da conversa (opcional).
-            
-        Returns:
-            str: Resposta gerada pela IA.
         """
         pass
 
@@ -63,40 +48,21 @@ class AIModelPort(ABC):
     async def delete_file(self, file_uri: str):
         """
         Remove um arquivo do cache do provedor.
-        
-        Args:
-            file_uri: URI do arquivo a ser deletado.
         """
         pass
 
 class SecurityPort(ABC):
     """
-    Interface para serviços de criptografia e segurança.
+    Interface para serviços de criptografia e segurança (AES-256).
     """
     @abstractmethod
     def encrypt(self, plain_text: str) -> str:
-        """
-        Criptografa um texto puro.
-        
-        Args:
-            plain_text: Texto a ser protegido.
-            
-        Returns:
-            str: Texto cifrado (geralmente em Base64).
-        """
+        """Criptografa um texto puro."""
         pass
 
     @abstractmethod
     def decrypt(self, cipher_text: str) -> str:
-        """
-        Descriptografa um texto cifrado.
-        
-        Args:
-            cipher_text: Texto cifrado.
-            
-        Returns:
-            str: Texto puro original.
-        """
+        """Descriptografa um texto cifrado."""
         pass
 
 class PersistencePort(ABC):
@@ -105,60 +71,48 @@ class PersistencePort(ABC):
     """
     @abstractmethod
     async def save_session(self, chat_id: str, data: Dict[str, Any]):
-        """
-        Salva ou atualiza os dados de sessão de um usuário.
-        
-        Args:
-            chat_id: ID do chat.
-            data: Dicionário com os dados da sessão.
-        """
+        """Salva os dados de sessão de um usuário."""
         pass
 
     @abstractmethod
     async def get_session(self, chat_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Recupera os dados de sessão de um usuário.
-        
-        Args:
-            chat_id: ID do chat.
-            
-        Returns:
-            Optional[Dict[str, Any]]: Dados da sessão ou None se não existir.
-        """
+        """Recupera os dados de sessão de um usuário."""
         pass
 
     @abstractmethod
     async def clear_session(self, chat_id: str):
-        """
-        Remove permanentemente a sessão de um usuário.
-        
-        Args:
-            chat_id: ID do chat.
-        """
+        """Remove a sessão de um usuário."""
         pass
 
     @abstractmethod
     async def save_preference(self, chat_id: str, key: str, value: str):
-        """
-        Salva uma preferência de usuário (ex: modo curto/longo).
-        
-        Args:
-            chat_id: ID do chat.
-            key: Nome da preferência.
-            value: Valor da preferência.
-        """
+        """Salva uma preferência de usuário."""
         pass
 
     @abstractmethod
     async def get_preference(self, chat_id: str, key: str) -> Optional[str]:
+        """Recupera uma preferência de usuário."""
+        pass
+    
+    @abstractmethod
+    async def has_accepted_terms(self, chat_id: str) -> bool:
         """
-        Recupera uma preferência de usuário.
+        Verifica se o usuário já aceitou os termos da LGPD.
         
         Args:
             chat_id: ID do chat.
-            key: Nome da preferência.
             
         Returns:
-            Optional[str]: Valor salvo ou None.
+            bool: True se aceitou, False caso contrário.
+        """
+        pass
+
+    @abstractmethod
+    async def accept_terms(self, chat_id: str):
+        """
+        Registra o consentimento do usuário com os termos de privacidade.
+        
+        Args:
+            chat_id: ID do chat.
         """
         pass

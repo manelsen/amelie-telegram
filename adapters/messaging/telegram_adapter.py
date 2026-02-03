@@ -1,5 +1,5 @@
-from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters, CommandHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters, CommandHandler, CallbackQueryHandler
 import logging
 import asyncio
 from ports.interfaces import MessagingPort
@@ -10,20 +10,14 @@ logger = logging.getLogger("TelegramAdapter")
 
 class TelegramAdapter(MessagingPort):
     """
-    Adaptador para a plataforma Telegram utilizando python-telegram-bot.
+    Adaptador para a plataforma Telegram (python-telegram-bot).
     
-    Gerencia a recepção de mídias, textos e comandos, coordenando
-    o download e o envio de respostas para o usuário.
+    Implementa a interface MessagingPort para gerenciar mensagens, mídias
+    e botões interativos de consentimento da LGPD.
     """
 
     def __init__(self, token: str, vision_service: VisionService):
-        """
-        Inicializa a aplicação do Telegram.
-
-        Args:
-            token (str): Token do bot fornecido pelo BotFather.
-            vision_service (VisionService): Instância do serviço core.
-        """
+        """Inicializa a aplicação Telegram e configura os tipos suportados."""
         self.token = token
         self.vision_service = vision_service
         self.app = ApplicationBuilder().token(token).read_timeout(30).write_timeout(30).build()
@@ -31,29 +25,38 @@ class TelegramAdapter(MessagingPort):
         self.supported_mimetypes = {
             "image/jpeg": "image/jpeg", "image/png": "image/png", "image/webp": "image/webp",
             "application/pdf": "application/pdf", "text/markdown": "text/markdown",
-            "video/mp4": "video/mp4",
-            "audio/mpeg": "audio/mpeg", "audio/mp3": "audio/mpeg", 
-            "audio/ogg": "audio/ogg", "audio/wav": "audio/wav", "audio/x-wav": "audio/wav",
-            "audio/webm": "audio/webm", "audio/flac": "audio/flac", "audio/aac": "audio/aac"
+            "video/mp4": "video/mp4", "audio/mpeg": "audio/mpeg", "audio/ogg": "audio/ogg"
         }
 
     async def _handle_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Processa comandos de barra (ex: /ajuda, /curto)."""
+        """Direciona comandos do Telegram para o VisionService."""
         chat_id = str(update.effective_chat.id)
         command = update.message.text.split()[0].lower()
         result = await self.vision_service.process_command(chat_id, command)
-        await update.message.reply_text(result)
+        
+        if result == "LGPD_NOTICE":
+            keyboard = [[InlineKeyboardButton("Concordo e Aceito", callback_data='accept_lgpd')]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text(self.vision_service.get_lgpd_text(), reply_markup=reply_markup)
+        else:
+            await update.message.reply_text(result)
+
+    async def _handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Gerencia cliques em botões (Inline Buttons)."""
+        query = update.callback_query
+        await query.answer()
+        if query.data == 'accept_lgpd':
+            chat_id = str(update.effective_chat.id)
+            await self.vision_service.accept_terms(chat_id)
+            await query.edit_message_text(text="Obrigada por confiar na Amélie! 🌸 Agora você já pode me enviar imagens, vídeos ou documentos para análise.")
 
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
-        Handler central para todas as mensagens (mídia e texto).
+        Handler mestre para mensagens recebidas.
         
-        Identifica o tipo de conteúdo, baixa arquivos se necessário e
-        encaminha para o VisionService via fila de processamento.
+        Realiza o roteamento de mídias para o núcleo de processamento.
         """
-        # Inicia o worker assíncrono se for o primeiro contato
         self.vision_service.start_worker()
-        
         if not update.message: return
         message = update.message
         chat_id = str(update.effective_chat.id)
@@ -61,7 +64,7 @@ class TelegramAdapter(MessagingPort):
         file_to_download = None
         mime_type = None
 
-        # Roteamento baseado no tipo de mensagem
+        # Identificação robusta do tipo de mídia
         if message.photo:
             file_to_download = await message.photo[-1].get_file()
             mime_type = "image/jpeg"
@@ -77,57 +80,51 @@ class TelegramAdapter(MessagingPort):
         elif message.document:
             raw_mime = message.document.mime_type
             file_name = message.document.file_name.lower()
-            if raw_mime in self.supported_mimetypes:
-                mime_type = self.supported_mimetypes[raw_mime]
+            if raw_mime in self.supported_mimetypes: mime_type = self.supported_mimetypes[raw_mime]
             elif file_name.endswith(".md"): mime_type = "text/markdown"
             elif file_name.endswith(".pdf"): mime_type = "application/pdf"
-            elif file_name.endswith(".mp4"): mime_type = "video/mp4"
-            elif file_name.endswith((".mp3", ".wav", ".ogg", ".flac", ".aac")):
-                if "audio" not in raw_mime: mime_type = "audio/mpeg" 
             if mime_type: file_to_download = await message.document.get_file()
 
-        # Fluxo de processamento de arquivo
         if file_to_download:
             try:
                 content_bytes = await file_to_download.download_as_bytearray()
                 result = await self.vision_service.process_file_request(chat_id, bytes(content_bytes), mime_type)
-                await self._send_long_message(update, result)
+                if result == "POR_FAVOR_ACEITE_TERMOS":
+                    await update.message.reply_text("Para sua segurança, aceite os termos da LGPD digitando /start antes de começarmos.")
+                else:
+                    await self._send_long_message(update, result)
             except Exception as e:
-                logger.error(f"Erro no processamento de arquivo: {e}", exc_info=True)
+                logger.error(f"Erro: {e}", exc_info=True)
             return
 
-        # Fluxo de pergunta textual (Contextual)
         if message.text:
             try:
                 result = await self.vision_service.process_question_request(chat_id, message.text)
-                await self._send_long_message(update, result)
+                if result == "POR_FAVOR_ACEITE_TERMOS":
+                    await update.message.reply_text("Por favor, aceite os termos da LGPD digitando /start primeiro.")
+                else:
+                    await self._send_long_message(update, result)
             except NoContextError:
-                await update.message.reply_text("Por favor, envie um arquivo primeiro para começarmos.")
+                await update.message.reply_text("Por favor, envie um arquivo primeiro.")
             except Exception as e:
-                logger.error(f"Erro na pergunta contextual: {e}", exc_info=True)
+                logger.error(f"Erro: {e}", exc_info=True)
 
     async def _send_long_message(self, update: Update, text: str):
-        """Divide mensagens longas (>4k chars) para respeitar limites do Telegram."""
+        """Garante o envio completo de textos extensos dividindo em chunks."""
         MAX_LENGTH = 4000
         for i in range(0, len(text), MAX_LENGTH):
             chunk = text[i:i + MAX_LENGTH]
             if chunk.strip(): await update.message.reply_text(chunk)
 
     def start(self):
-        """Configura handlers e inicia o polling do bot."""
-        # Registra comandos
-        self.app.add_handler(CommandHandler(["ajuda", "curto", "longo", "legenda", "completo"], self._handle_command))
-        
-        # Registra mensagens gerais (Mídia + Texto puro)
-        handler = MessageHandler(
-            filters.PHOTO | filters.VIDEO | filters.VOICE | filters.AUDIO | filters.Document.ALL | filters.TEXT & (~filters.COMMAND), 
-            self._handle_message
-        )
-        self.app.add_handler(handler)
+        """Registra handlers e inicia o ciclo de vida do bot."""
+        self.app.add_handler(CommandHandler(["start", "ajuda", "curto", "longo", "legenda", "completo"], self._handle_command))
+        self.app.add_handler(CallbackQueryHandler(self._handle_callback))
+        self.app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.VOICE | filters.AUDIO | filters.Document.ALL | filters.TEXT & (~filters.COMMAND), self._handle_message))
         
         logger.info("Bot Amélie iniciado no Telegram.")
         self.app.run_polling()
 
     async def send_message(self, chat_id: str, text: str):
-        """Envio direto de mensagem via API."""
+        """Envia mensagem assíncrona para o cliente."""
         await self.app.bot.send_message(chat_id=chat_id, text=text)
