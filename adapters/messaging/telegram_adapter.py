@@ -1,6 +1,7 @@
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
 import logging
+import asyncio
 from ports.interfaces import MessagingPort
 from core.service import VisionService
 from core.exceptions import NoContextError
@@ -11,7 +12,7 @@ class TelegramAdapter(MessagingPort):
     def __init__(self, token: str, vision_service: VisionService):
         self.token = token
         self.vision_service = vision_service
-        self.app = ApplicationBuilder().token(token).build()
+        self.app = ApplicationBuilder().token(token).read_timeout(30).write_timeout(30).build()
         
         self.supported_mimetypes = {
             "image/jpeg": "image/jpeg", "image/png": "image/png", "image/webp": "image/webp",
@@ -20,14 +21,17 @@ class TelegramAdapter(MessagingPort):
         }
 
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        # Garante que o worker está rodando
+        self.vision_service.start_worker()
+        
         if not update.message: return
         message = update.message
         chat_id = str(update.effective_chat.id)
 
-        # 1. Se for ARQUIVO (Foto, Vídeo, Doc)
         file_to_download = None
         mime_type = None
 
+        # Identificação de anexo
         if message.photo:
             file_to_download = await message.photo[-1].get_file()
             mime_type = "image/jpeg"
@@ -40,28 +44,30 @@ class TelegramAdapter(MessagingPort):
             if raw_mime in self.supported_mimetypes: mime_type = self.supported_mimetypes[raw_mime]
             elif file_name.endswith(".md"): mime_type = "text/markdown"
             elif file_name.endswith(".pdf"): mime_type = "application/pdf"
+            elif file_name.endswith(".mp4"): mime_type = "video/mp4"
             if mime_type: file_to_download = await message.document.get_file()
 
         if file_to_download:
             try:
-                await update.message.reply_text(f"Lendo {mime_type.split('/')[-1]}... 🔄")
+                # Agora o bot faz o download em silêncio (sem mensagens pro usuário)
                 content_bytes = await file_to_download.download_as_bytearray()
                 result = await self.vision_service.process_file_request(chat_id, bytes(content_bytes), mime_type)
                 await self._send_long_message(update, result)
             except Exception as e:
-                await update.message.reply_text("Erro ao processar o arquivo.")
+                # Erro logado internamente, não enviado pro cliente
+                logger.error(f"Erro no processamento de arquivo: {e}", exc_info=True)
             return
 
-        # 2. Se for APENAS TEXTO (Pergunta sobre o arquivo anterior)
         if message.text:
             try:
-                await update.message.reply_text("Pensando... 🤔")
+                # Pergunta processada em silêncio
                 result = await self.vision_service.process_question_request(chat_id, message.text)
                 await self._send_long_message(update, result)
             except NoContextError:
-                await update.message.reply_text("Por favor, envie uma imagem, vídeo ou PDF primeiro para começarmos.")
+                # Apenas erros de fluxo básico são informados ao usuário
+                await update.message.reply_text("Por favor, envie um arquivo primeiro para começarmos.")
             except Exception as e:
-                await update.message.reply_text("Houve um erro ao processar sua pergunta.")
+                logger.error(f"Erro na pergunta contextual: {e}", exc_info=True)
 
     async def _send_long_message(self, update, text):
         MAX_LENGTH = 4000
@@ -70,10 +76,9 @@ class TelegramAdapter(MessagingPort):
             if chunk.strip(): await update.message.reply_text(chunk)
 
     def start(self):
-        # Escuta Fotos, Vídeos, Documentos E Mensagens de Texto
         handler = MessageHandler(filters.PHOTO | filters.VIDEO | filters.Document.ALL | filters.TEXT, self._handle_message)
         self.app.add_handler(handler)
-        logger.info("Bot iniciado com suporte a perguntas contextuais.")
+        logger.info("Bot iniciado em modo silencioso (logs apenas no terminal).")
         self.app.run_polling()
 
     async def send_message(self, chat_id: str, text: str):
