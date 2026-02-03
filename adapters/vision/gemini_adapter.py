@@ -1,21 +1,45 @@
 from google import genai
 from google.genai import types
-from ports.interfaces import VisionModelPort
+from ports.interfaces import AIModelPort
 
-class GeminiAdapter(VisionModelPort):
+class GeminiAdapter(AIModelPort):
     def __init__(self, api_key: str):
         self.client = genai.Client(api_key=api_key)
         self.model_name = "gemini-2.5-flash-lite"
 
-    async def describe_image(self, image_bytes: bytes) -> str:
-        prompt = "Descreva esta imagem detalhadamente para uma pessoa com deficiência visual (audiodescrição)."
+    async def process_content(self, content_bytes: bytes, mime_type: str) -> str:
+        # Define o prompt com base no tipo de arquivo
+        if mime_type.startswith("image/"):
+            prompt = (
+                "Descreva esta imagem detalhadamente para uma pessoa com deficiência visual (audiodescrição). "
+                "Use apenas texto puro, sem negrito, sem itálico e sem asteriscos. "
+                "Responda obrigatoriamente em português brasileiro."
+            )
+        elif mime_type.startswith("video/"):
+            prompt = (
+                "Descreva o conteúdo deste vídeo detalhadamente para uma pessoa com deficiência visual (audiodescrição). "
+                "Relate as ações, cenários e elementos visuais importantes de forma cronológica. "
+                "Use apenas texto puro, sem negrito, sem itálico e sem asteriscos. "
+                "Responda obrigatoriamente em português brasileiro."
+            )
+        elif mime_type == "application/pdf":
+            prompt = (
+                "Resuma o conteúdo deste PDF de forma clara e organizada. "
+                "Use apenas texto simples, sem listas com asteriscos, sem negrito e sem qualquer formatação markdown. "
+                "Responda obrigatoriamente em português brasileiro."
+            )
+        else:
+            prompt = (
+                "Analise este documento e descreva seu conteúdo. "
+                "Use texto puro, sem formatação markdown e sem asteriscos. "
+                "Responda obrigatoriamente em português brasileiro."
+            )
+
+        # Envia como bytes com o mime_type correto
+        content_part = types.Part.from_bytes(data=content_bytes, mime_type=mime_type)
         
-        # Na biblioteca google-genai, imagens em bytes devem ser enviadas como Part
-        image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
-        
-        # Executa a chamada
         response = self.client.models.generate_content(
             model=self.model_name,
-            contents=[prompt, image_part]
+            contents=[prompt, content_part]
         )
         return response.text

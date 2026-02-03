@@ -15,11 +15,11 @@ def main():
         print("Erro: Verifique se TELEGRAM_TOKEN e GEMINI_API_KEY estão no .env")
         return
 
-    # 1. Configura o modelo (Gemini 3 Flash)
-    vision_model = GeminiAdapter(api_key=GEMINI_API_KEY)
+    # 1. Configura o modelo (Gemini 2.0 Flash)
+    ai_model = GeminiAdapter(api_key=GEMINI_API_KEY)
     
-    # 2. Configura o serviço core
-    service = VisionService(vision_model=vision_model)
+    # 2. Configura o serviço core (Refatorado para ai_model)
+    service = VisionService(ai_model=ai_model)
     
     # 3. Configura o bot do Telegram
     bot = TelegramAdapter(token=TELEGRAM_TOKEN, vision_service=service)

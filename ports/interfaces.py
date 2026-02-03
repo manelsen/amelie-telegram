@@ -2,14 +2,14 @@ from abc import ABC, abstractmethod
 
 class MessagingPort(ABC):
     @abstractmethod
-    async def start(self):
+    def start(self):
         pass
 
     @abstractmethod
     async def send_message(self, chat_id: str, text: str):
         pass
 
-class VisionModelPort(ABC):
+class AIModelPort(ABC):
     @abstractmethod
-    async def describe_image(self, image_bytes: bytes) -> str:
+    async def process_content(self, content_bytes: bytes, mime_type: str) -> str:
         pass
