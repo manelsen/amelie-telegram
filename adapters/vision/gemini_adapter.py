@@ -17,22 +17,28 @@ class GeminiAdapter(AIModelPort):
     )
     async def process_content(self, content_bytes: bytes, mime_type: str, prompt: str, history: list = None) -> str:
         try:
-            # Prepara o arquivo como Part
             content_part = types.Part.from_bytes(data=content_bytes, mime_type=mime_type)
             
-            # Monta a lista de conteúdos: Arquivo + Prompt
-            # O Gemini 2.0+ processa melhor quando o arquivo vem antes do prompt
-            current_contents = [content_part, prompt]
+            # Construindo o contexto: [ARQUIVO] + [HISTÓRICO] + [PERGUNTA ATUAL]
+            # Isso é mais eficiente em tokens do que repetir o arquivo em cada turno
+            messages = []
             
-            # Se houver histórico, poderíamos usar start_chat, mas enviar o arquivo 
-            # recorrentemente com o histórico no contents é mais robusto para sessões curtas
-            # sem precisar gerenciar 'file_ids' persistentes no Google Cloud.
+            # Adiciona o histórico
+            if history:
+                for entry in history:
+                    role = entry["role"]
+                    parts = [types.Part.from_text(text=p) for p in entry["parts"]]
+                    messages.append(types.Content(role=role, parts=parts))
+
+            # Adiciona o turno atual com o arquivo acoplado à pergunta do usuário
+            current_parts = [content_part, types.Part.from_text(text=prompt)]
+            messages.append(types.Content(role="user", parts=current_parts))
             
             response = self.client.models.generate_content(
                 model=self.model_name,
-                contents=current_contents,
+                contents=messages,
                 config=types.GenerateContentConfig(
-                    system_instruction="Você é um assistente de audiodescrição e análise para pessoas cegas. Responda sempre em português, sem formatação markdown."
+                    system_instruction="Você é um assistente de audiodescrição e análise rigorosa para pessoas cegas. Responda em português, texto puro, sem markdown. Use o arquivo enviado como referência principal."
                 )
             )
             return response.text
