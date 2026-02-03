@@ -16,6 +16,14 @@ class SQLitePersistenceAdapter(PersistencePort):
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            await db.execute('''
+                CREATE TABLE IF NOT EXISTS preferences (
+                    chat_id TEXT,
+                    key TEXT,
+                    value TEXT,
+                    PRIMARY KEY (chat_id, key)
+                )
+            ''')
             await db.commit()
 
     async def save_session(self, chat_id: str, data: Dict[str, Any]):
@@ -41,3 +49,21 @@ class SQLitePersistenceAdapter(PersistencePort):
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute('DELETE FROM sessions WHERE chat_id = ?', (chat_id,))
             await db.commit()
+
+    async def save_preference(self, chat_id: str, key: str, value: str):
+        await self._init_db()
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                'INSERT OR REPLACE INTO preferences (chat_id, key, value) VALUES (?, ?, ?)',
+                (chat_id, key, value)
+            )
+            await db.commit()
+
+    async def get_preference(self, chat_id: str, key: str) -> Optional[str]:
+        await self._init_db()
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute('SELECT value FROM preferences WHERE chat_id = ? AND key = ?', (chat_id, key)) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    return row[0]
+        return None

@@ -1,5 +1,5 @@
 from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
+from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters, CommandHandler
 import logging
 import asyncio
 from ports.interfaces import MessagingPort
@@ -23,6 +23,12 @@ class TelegramAdapter(MessagingPort):
             "audio/webm": "audio/webm", "audio/flac": "audio/flac", "audio/aac": "audio/aac"
         }
 
+    async def _handle_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat_id = str(update.effective_chat.id)
+        command = update.message.text.split()[0].lower()
+        result = await self.vision_service.process_command(chat_id, command)
+        await update.message.reply_text(result)
+
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self.vision_service.start_worker()
         
@@ -33,40 +39,29 @@ class TelegramAdapter(MessagingPort):
         file_to_download = None
         mime_type = None
 
-        # 1. Foto
+        # Identificação de mídia
         if message.photo:
             file_to_download = await message.photo[-1].get_file()
             mime_type = "image/jpeg"
-        
-        # 2. Vídeo
         elif message.video:
             file_to_download = await message.video.get_file()
             mime_type = message.video.mime_type or "video/mp4"
-
-        # 3. Voz (Audio do Telegram)
         elif message.voice:
             file_to_download = await message.voice.get_file()
             mime_type = message.voice.mime_type or "audio/ogg"
-
-        # 4. Áudio (Arquivo de música/audio)
         elif message.audio:
             file_to_download = await message.audio.get_file()
             mime_type = message.audio.mime_type or "audio/mpeg"
-
-        # 5. Documento
         elif message.document:
             raw_mime = message.document.mime_type
             file_name = message.document.file_name.lower()
-            
             if raw_mime in self.supported_mimetypes:
                 mime_type = self.supported_mimetypes[raw_mime]
             elif file_name.endswith(".md"): mime_type = "text/markdown"
             elif file_name.endswith(".pdf"): mime_type = "application/pdf"
             elif file_name.endswith(".mp4"): mime_type = "video/mp4"
             elif file_name.endswith((".mp3", ".wav", ".ogg", ".flac", ".aac")):
-                # Tenta inferir se for audio comum anexado como doc
                 if "audio" not in raw_mime: mime_type = "audio/mpeg" 
-            
             if mime_type: file_to_download = await message.document.get_file()
 
         if file_to_download:
@@ -94,13 +89,15 @@ class TelegramAdapter(MessagingPort):
             if chunk.strip(): await update.message.reply_text(chunk)
 
     def start(self):
-        # Escuta Fotos, Vídeos, Documentos, Áudio, Voz e Texto
+        # Comandos
+        self.app.add_handler(CommandHandler(["ajuda", "curto", "longo", "legenda", "completo"], self._handle_command))
+        # Geral
         handler = MessageHandler(
-            filters.PHOTO | filters.VIDEO | filters.VOICE | filters.AUDIO | filters.Document.ALL | filters.TEXT, 
+            filters.PHOTO | filters.VIDEO | filters.VOICE | filters.AUDIO | filters.Document.ALL | filters.TEXT & (~filters.COMMAND), 
             self._handle_message
         )
         self.app.add_handler(handler)
-        logger.info("Bot iniciado com suporte a Áudio e Voz.")
+        logger.info("Bot iniciado com comandos e persistência de preferências.")
         self.app.run_polling()
 
     async def send_message(self, chat_id: str, text: str):

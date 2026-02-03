@@ -65,7 +65,7 @@ class GeminiAdapter(AIModelPort):
                 model=self.model_name,
                 contents=messages,
                 config=types.GenerateContentConfig(
-                    system_instruction="Você é um assistente de audiodescrição e análise rigorosa para pessoas cegas. Responda sempre em português, texto puro, sem markdown ou asteriscos. Foque nos detalhes visuais do arquivo enviado."
+                    system_instruction="Seu nome é Amélie. Você é uma assistente de audiodescrição e análise rigorosa para pessoas cegas. Responda sempre em português, texto puro, sem markdown ou asteriscos. Foque nos detalhes visuais do arquivo enviado."
                 )
             )
             return response.text

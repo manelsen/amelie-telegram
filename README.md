@@ -1,6 +1,9 @@
-# Vision Bot para Deficientes Visuais 👁️🤖
+# Vision Bot para Deficientes Visuais (Amélie) 👁️🤖
 
 Um bot multimodal para Telegram construído com **Arquitetura Hexagonal**, focado em acessibilidade e privacidade.
+
+## Nome do Projeto: Amélie
+O nome é uma homenagem à sensibilidade e à capacidade de enxergar a beleza nos pequenos detalhes.
 
 ## Funcionalidades
 - **Audiodescrição:** Imagens e vídeos processados pelo Gemini 2.5 Flash Lite.

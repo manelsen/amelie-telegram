@@ -28,3 +28,7 @@ class PersistencePort(ABC):
     async def get_session(self, chat_id: str) -> Optional[Dict[str, Any]]: pass
     @abstractmethod
     async def clear_session(self, chat_id: str): pass
+    @abstractmethod
+    async def save_preference(self, chat_id: str, key: str, value: str): pass
+    @abstractmethod
+    async def get_preference(self, chat_id: str, key: str) -> Optional[str]: pass

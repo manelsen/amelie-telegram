@@ -57,39 +57,50 @@ class VisionService:
     async def process_file_request(self, chat_id: str, content_bytes: bytes, mime_type: str) -> str:
         logger.info(f"Recebido. Tipo: {mime_type} | Chat: {chat_id}")
         
-        # Busca sessão anterior para limpar cache do Google
         old_session = await self.persistence.get_session(chat_id)
         if old_session:
-            # Descriptografa a URI antiga para deletar
             old_uri = self.security.decrypt(old_session["uri"])
             asyncio.create_task(self.ai_model.delete_file(old_uri))
 
-        # 1. Faz upload e recebe URI limpa
         file_uri = await self._enqueue_request(chat_id, self.ai_model.upload_file, content_bytes, mime_type)
-        
-        # 2. CRIPTOGRAFA os dados sensíveis antes de salvar no banco
         encrypted_uri = self.security.encrypt(file_uri)
         
         new_session = {
             "uri": encrypted_uri,
             "mime": mime_type,
-            "history": [] # Histórico será criptografado conforme cresce
+            "history": []
         }
         await self.persistence.save_session(chat_id, new_session)
         
-        # 3. Processamento inicial
-        prompt = "Descreva este arquivo detalhadamente para um cego."
-        return await self.process_question_request(chat_id, prompt)
+        # Determina o prompt inicial baseado nas preferências do usuário
+        style = await self.persistence.get_preference(chat_id, "style") or "longo"
+        
+        if mime_type.startswith("image/"):
+            if style == "curto":
+                prompt = "Descreva esta imagem de forma muito breve para um cego (máximo 200 letras)."
+            else:
+                prompt = "Descreva esta imagem detalhadamente para um cego."
+        elif mime_type.startswith("video/"):
+            video_mode = await self.persistence.get_preference(chat_id, "video_mode") or "completo"
+            if video_mode == "legenda":
+                prompt = "Crie legendas para este vídeo, descrevendo o que acontece em cada momento."
+            else:
+                prompt = "Descreva este vídeo detalhadamente de forma cronológica para um cego."
+        elif mime_type == "application/pdf":
+            prompt = "Resuma este PDF de forma simples para um cego."
+        else:
+            prompt = "Analise este documento."
+
+        result = await self.process_question_request(chat_id, prompt)
+        logger.info(f"Processado. Tipo: {mime_type}")
+        return result
 
     async def process_question_request(self, chat_id: str, question: str) -> str:
         session = await self.persistence.get_session(chat_id)
         if not session:
             raise NoContextError("Nenhum arquivo no cache.")
         
-        # DESCRIPTOGRAFA para usar na IA
         real_uri = self.security.decrypt(session["uri"])
-        
-        # Descriptografa o histórico
         real_history = []
         for h in session.get("history", []):
             real_history.append({
@@ -110,7 +121,6 @@ class VisionService:
 
         clean_result = self._clean_text_for_accessibility(raw_result)
         
-        # CRIPTOGRAFA a nova interação antes de salvar
         new_history_entry_user = {"role": "user", "parts": [self.security.encrypt(question)]}
         new_history_entry_model = {"role": "model", "parts": [self.security.encrypt(clean_result)]}
         
@@ -120,3 +130,27 @@ class VisionService:
         await self.persistence.save_session(chat_id, session)
         logger.info(f"Processado. Chat: {chat_id}")
         return clean_result
+
+    async def process_command(self, chat_id: str, command: str) -> str:
+        if command == "/ajuda":
+            return (
+                "Comandos disponíveis:\n"
+                "/ajuda - Mostra esta mensagem\n"
+                "/curto - Audiodescrições curtas (até 200 letras)\n"
+                "/longo - Audiodescrições completas e detalhadas\n"
+                "/legenda - O vídeo gera uma legenda cronológica\n"
+                "/completo - O vídeo é descrito de forma detalhada"
+            )
+        elif command == "/curto":
+            await self.persistence.save_preference(chat_id, "style", "curto")
+            return "Estilo definido como: Curto."
+        elif command == "/longo":
+            await self.persistence.save_preference(chat_id, "style", "longo")
+            return "Estilo definido como: Longo."
+        elif command == "/legenda":
+            await self.persistence.save_preference(chat_id, "video_mode", "legenda")
+            return "Modo de vídeo definido como: Legenda."
+        elif command == "/completo":
+            await self.persistence.save_preference(chat_id, "video_mode", "completo")
+            return "Modo de vídeo definido como: Completo."
+        return "Comando desconhecido."
