@@ -1,0 +1,14 @@
+services:
+  vision-bot:
+    build: .
+    container_name: vision-bot
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - ./bot_data.db:/app/bot_data.db
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10mb"
+        max-file: "3"
