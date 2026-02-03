@@ -1,5 +1,6 @@
 import re
 import logging
+import logging
 from ports.interfaces import AIModelPort
 from core.exceptions import VisionBotError, transientAPIError, PermanentAPIError
 
