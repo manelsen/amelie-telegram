@@ -96,16 +96,23 @@ class VisionService:
         # Determina o prompt com base nas preferências persistentes
         style = await self.persistence.get_preference(chat_id, "style") or "longo"
         if mime_type.startswith("image/"):
-            prompt = "Descreva esta imagem de forma muito breve (200 letras)." if style == "curto" else "Descreva detalhadamente."
+            prompt = "Descreva esta imagem de forma muito breve (200 letras)." if style == "curto" else "Descreva detalhadamente esta imagem para um cego."
         elif mime_type.startswith("video/"):
             video_mode = await self.persistence.get_preference(chat_id, "video_mode") or "completo"
-            prompt = "Crie legendas cronológicas." if video_mode == "legenda" else "Descreva detalhadamente o vídeo."
+            if video_mode == "legenda":
+                prompt = "Transcreva a faixa de áudio deste vídeo palavra por palavra (verbatim), criando uma legenda fiel ao que é dito."
+            else:
+                prompt = "Descreva este vídeo detalhadamente de forma cronológica para um cego."
         elif mime_type.startswith("audio/"):
-            prompt = "Transcreva e analise este áudio detalhadamente."
+            prompt = "Transcreva e analise este áudio detalhadamente para uma pessoa cega."
         elif mime_type == "application/pdf":
-            prompt = "Resuma este PDF de forma simples."
+            prompt = "Resuma este PDF de forma simples para um cego."
+        elif mime_type == "text/csv":
+            prompt = "Analise esta tabela CSV e descreva seus dados de forma clara para um cego."
+        elif mime_type == "text/html" or mime_type == "text/xml":
+            prompt = "Analise o conteúdo deste documento estruturado e extraia as informações principais de forma clara."
         else:
-            prompt = "Analise este documento."
+            prompt = "Analise este documento e descreva seu conteúdo para uma pessoa cega."
 
         result = await self.process_question_request(chat_id, prompt)
         logger.info(f"Processado. Tipo: {mime_type}")
@@ -128,15 +135,18 @@ class VisionService:
                 "parts": [self.security.decrypt(p) for p in h["parts"]]
             })
 
+        logger.info(f"Pergunta sobre cache (Chat: {chat_id})")
+        
         raw_result = await self._enqueue_request(
             chat_id, self.ai_model.ask_about_file, real_uri, session["mime"], question, real_history
         )
 
         clean_result = self._clean_text_for_accessibility(raw_result)
         
-        # Histórico criptografado antes de salvar
+        # Salva histórico criptografado
         session["history"].append({"role": "user", "parts": [self.security.encrypt(question)]})
         session["history"].append({"role": "model", "parts": [self.security.encrypt(clean_result)]})
+        
         await self.persistence.save_session(chat_id, session)
         return clean_result
 
@@ -148,7 +158,18 @@ class VisionService:
             return "LGPD_NOTICE"
 
         if command == "/ajuda":
-            return "Amélie: Envie mídias para audiodescrição. Comandos: /curto, /longo, /legenda, /completo."
+            return (
+                "Olá! Sou a Amélie, sua assistente de audiodescrição e acessibilidade. 👁️🌸\n\n"
+                "Aqui está como você pode me usar:\n\n"
+                "1. Envie uma mídia: Mande uma foto, vídeo, áudio ou documento (PDF/MD).\n"
+                "2. Pergunte detalhes: Após enviar, você pode digitar perguntas sobre o arquivo.\n\n"
+                "Comandos de Configuração:\n"
+                "/curto - Imagem: Audiodescrição breve (até 200 letras).\n"
+                "/longo - Imagem: Audiodescrição detalhada (padrão).\n"
+                "/legenda - Vídeo: Transcrição literal (verbatim) da fala presente no vídeo.\n"
+                "/completo - Vídeo: Descrição visual narrativa detalhada (padrão).\n"
+                "/ajuda - Mostra esta mensagem de ajuda."
+            )
         
         prefs = {"/curto": ("style", "curto"), "/longo": ("style", "longo"), 
                  "/legenda": ("video_mode", "legenda"), "/completo": ("video_mode", "completo")}
@@ -156,9 +177,19 @@ class VisionService:
         if command in prefs:
             key, val = prefs[command]
             await self.persistence.save_preference(chat_id, key, val)
-            return f"Preferência {key} definida como {val}."
+            
+            if command == "/curto":
+                return "O modo curto foi ativado com sucesso. Isso significa que as audiodescrições de imagem serão breves, com até 200 letras, ideais para uma identificação rápida."
+            elif command == "/longo":
+                return "O modo longo foi ativado com sucesso. Agora as audiodescrições de imagem serão completas e detalhadas, fornecendo o máximo de contexto visual."
+            elif command == "/legenda":
+                return "O modo legenda foi ativado com sucesso. A Amélie agora irá transcrever a faixa de áudio dos vídeos palavra por palavra (verbatim), gerando uma legenda fiel ao que é dito."
+            elif command == "/completo":
+                return "O modo completo para vídeos foi ativado com sucesso. As descrições de vídeo agora serão narrativas e detalhadas."
+            
+            return f"Preferência atualizada: o modo {val} foi ativado!"
         
-        return "Comando desconhecido."
+        return "Comando desconhecido. Digite /ajuda para ver as opções."
 
     async def accept_terms(self, chat_id: str):
         """Registra a aceitação dos termos LGPD no banco de dados."""

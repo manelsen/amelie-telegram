@@ -1,4 +1,4 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters, CommandHandler, CallbackQueryHandler
 import logging
 import asyncio
@@ -22,10 +22,33 @@ class TelegramAdapter(MessagingPort):
         self.vision_service = vision_service
         self.app = ApplicationBuilder().token(token).read_timeout(30).write_timeout(30).build()
         
+        # Lista exaustiva de mimetypes suportados pela API do Gemini
         self.supported_mimetypes = {
-            "image/jpeg": "image/jpeg", "image/png": "image/png", "image/webp": "image/webp",
-            "application/pdf": "application/pdf", "text/markdown": "text/markdown",
-            "video/mp4": "video/mp4", "audio/mpeg": "audio/mpeg", "audio/ogg": "audio/ogg"
+            # Imagens
+            "image/jpeg": "image/jpeg", "image/png": "image/png", 
+            "image/webp": "image/webp", "image/heic": "image/heic", 
+            "image/heif": "image/heif",
+            
+            # Áudio
+            "audio/wav": "audio/wav", "audio/x-wav": "audio/wav",
+            "audio/mp3": "audio/mpeg", "audio/mpeg": "audio/mpeg",
+            "audio/aac": "audio/aac", "audio/ogg": "audio/ogg",
+            "audio/flac": "audio/flac", "audio/x-flac": "audio/flac",
+            "audio/aiff": "audio/aiff", "audio/x-aiff": "audio/aiff",
+            
+            # Vídeo
+            "video/mp4": "video/mp4", "video/mpeg": "video/mpeg",
+            "video/quicktime": "video/quicktime", "video/x-msvideo": "video/x-msvideo",
+            "video/x-flv": "video/x-flv", "video/webm": "video/webm",
+            "video/x-ms-wmv": "video/x-ms-wmv", "video/3gpp": "video/3gpp",
+            
+            # Documentos e Texto
+            "application/pdf": "application/pdf",
+            "text/plain": "text/plain",
+            "text/markdown": "text/markdown",
+            "text/html": "text/html",
+            "text/csv": "text/csv",
+            "text/xml": "text/xml"
         }
 
     async def _handle_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -64,7 +87,7 @@ class TelegramAdapter(MessagingPort):
         file_to_download = None
         mime_type = None
 
-        # Identificação robusta do tipo de mídia
+        # Identificação robusta do tipo de mídia enviada nativamente
         if message.photo:
             file_to_download = await message.photo[-1].get_file()
             mime_type = "image/jpeg"
@@ -80,9 +103,21 @@ class TelegramAdapter(MessagingPort):
         elif message.document:
             raw_mime = message.document.mime_type
             file_name = message.document.file_name.lower()
-            if raw_mime in self.supported_mimetypes: mime_type = self.supported_mimetypes[raw_mime]
+            
+            # Mapeamento para documentos e arquivos genéricos
+            if raw_mime in self.supported_mimetypes:
+                mime_type = self.supported_mimetypes[raw_mime]
             elif file_name.endswith(".md"): mime_type = "text/markdown"
             elif file_name.endswith(".pdf"): mime_type = "application/pdf"
+            elif file_name.endswith(".csv"): mime_type = "text/csv"
+            elif file_name.endswith(".txt"): mime_type = "text/plain"
+            elif file_name.endswith(".html"): mime_type = "text/html"
+            elif file_name.endswith(".xml"): mime_type = "text/xml"
+            elif file_name.endswith((".mp3", ".wav", ".ogg", ".flac", ".aac", ".aiff")):
+                mime_type = "audio/mpeg" # Fallback para áudio
+            elif file_name.endswith((".mp4", ".mov", ".avi", ".webm")):
+                mime_type = "video/mp4" # Fallback para vídeo
+                
             if mime_type: file_to_download = await message.document.get_file()
 
         if file_to_download:
@@ -94,7 +129,7 @@ class TelegramAdapter(MessagingPort):
                 else:
                     await self._send_long_message(update, result)
             except Exception as e:
-                logger.error(f"Erro: {e}", exc_info=True)
+                logger.error(f"Erro no processamento de arquivo: {e}", exc_info=True)
             return
 
         if message.text:
@@ -105,9 +140,9 @@ class TelegramAdapter(MessagingPort):
                 else:
                     await self._send_long_message(update, result)
             except NoContextError:
-                await update.message.reply_text("Por favor, envie um arquivo primeiro.")
+                await update.message.reply_text("Por favor, envie um arquivo primeiro para começarmos.")
             except Exception as e:
-                logger.error(f"Erro: {e}", exc_info=True)
+                logger.error(f"Erro na pergunta contextual: {e}", exc_info=True)
 
     async def _send_long_message(self, update: Update, text: str):
         """Garante o envio completo de textos extensos dividindo em chunks."""
@@ -116,13 +151,31 @@ class TelegramAdapter(MessagingPort):
             chunk = text[i:i + MAX_LENGTH]
             if chunk.strip(): await update.message.reply_text(chunk)
 
+    async def _setup_commands(self):
+        """Configura o menu de comandos (botão Menu) no Telegram."""
+        commands = [
+            BotCommand("start", "Iniciar Amélie e aceitar termos"),
+            BotCommand("ajuda", "Ver manual de uso"),
+            BotCommand("curto", "Imagem: Audiodescrição breve"),
+            BotCommand("longo", "Imagem: Audiodescrição detalhada"),
+            BotCommand("legenda", "Vídeo: Transcrição verbatim"),
+            BotCommand("completo", "Vídeo: Descrição narrativa")
+        ]
+        await self.app.bot.set_my_commands(commands)
+
     def start(self):
         """Registra handlers e inicia o ciclo de vida do bot."""
+        loop = asyncio.get_event_loop()
+        loop.create_task(self._setup_commands())
+
         self.app.add_handler(CommandHandler(["start", "ajuda", "curto", "longo", "legenda", "completo"], self._handle_command))
         self.app.add_handler(CallbackQueryHandler(self._handle_callback))
-        self.app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.VOICE | filters.AUDIO | filters.Document.ALL | filters.TEXT & (~filters.COMMAND), self._handle_message))
+        self.app.add_handler(MessageHandler(
+            filters.PHOTO | filters.VIDEO | filters.VOICE | filters.AUDIO | filters.Document.ALL | filters.TEXT & (~filters.COMMAND), 
+            self._handle_message
+        ))
         
-        logger.info("Bot Amélie iniciado no Telegram.")
+        logger.info("Bot Amélie iniciado no Telegram com suporte total a arquivos.")
         self.app.run_polling()
 
     async def send_message(self, chat_id: str, text: str):
