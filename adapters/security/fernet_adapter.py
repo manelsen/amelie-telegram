@@ -3,43 +3,43 @@ from ports.interfaces import SecurityPort
 
 class FernetSecurityAdapter(SecurityPort):
     """
-    Adaptador de segurança que utiliza criptografia simétrica AES-256 (Fernet).
+    Adaptador de segurança que utiliza criptografia simétrica AES-256 (Padrão Fernet).
     
-    Garante que os dados salvos no banco de dados sejam ilegíveis para humanos
-    ou outros processos, descriptografando-os apenas em tempo de execução.
+    Garante o isolamento e a privacidade dos dados sensíveis armazenados, 
+    permitindo que o sistema opere sob o conceito de 'Cegueira do Gestor'.
     """
 
     def __init__(self, key: str):
         """
-        Inicializa o motor de criptografia.
+        Inicializa o motor de criptografia com a chave mestra.
 
         Args:
-            key (str): Chave Fernet (Base64) gerada previamente.
+            key (str): Chave simétrica em Base64 (32 bytes).
         """
         self.fernet = Fernet(key.encode())
 
     def encrypt(self, plain_text: str) -> str:
         """
-        Criptografa uma string.
+        Transforma texto legível em um token criptografado seguro.
 
         Args:
-            plain_text (str): Texto original.
+            plain_text (str): Conteúdo original a ser protegido.
 
         Returns:
-            str: Token criptografado em formato string.
+            str: Texto cifrado em formato string (Base64).
         """
         if not plain_text: return ""
         return self.fernet.encrypt(plain_text.encode()).decode()
 
     def decrypt(self, cipher_text: str) -> str:
         """
-        Descriptografa um token Fernet.
+        Reverte um token criptografado para sua forma original legível.
 
         Args:
-            cipher_text (str): Token criptografado.
+            cipher_text (str): Token Fernet criptografado.
 
         Returns:
-            str: Texto original descriptografado.
+            str: O texto original descriptografado.
         """
         if not cipher_text: return ""
         return self.fernet.decrypt(cipher_text.encode()).decode()

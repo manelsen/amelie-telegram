@@ -1,25 +1,28 @@
 import aiosqlite
 import json
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 from ports.interfaces import PersistencePort
 
 class SQLitePersistenceAdapter(PersistencePort):
     """
-    Adaptador de persistência utilizando SQLite assíncrono.
+    Adaptador de persistência que utiliza o banco de dados SQLite assíncrono.
     
-    Gerencia o armazenamento persistente de sessões criptografadas,
-    preferências de modo (curto/longo) e o registro de consentimento LGPD.
+    Responsável por armazenar dados de sessão criptografados, preferências 
+    de interface e o registro de consentimento legal (LGPD).
     """
 
     def __init__(self, db_path: str):
         """
-        Inicializa o caminho do banco de dados.
+        Inicializa o caminho para o arquivo do banco de dados.
+
+        Args:
+            db_path (str): Caminho local do arquivo .db.
         """
         self.db_path = db_path
 
     async def _init_db(self):
         """
-        Garante a criação das tabelas 'sessions', 'preferences' e 'users'.
+        Garante a criação das tabelas 'sessions', 'preferences' e 'users' se não existirem.
         """
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute('''
@@ -47,7 +50,13 @@ class SQLitePersistenceAdapter(PersistencePort):
             await db.commit()
 
     async def save_session(self, chat_id: str, data: Dict[str, Any]):
-        """Salva a sessão criptografada no banco."""
+        """
+        Salva ou substitui os dados da sessão de um usuário.
+
+        Args:
+            chat_id (str): ID do chat do usuário.
+            data (Dict[str, Any]): Dicionário com os dados (ex: URI, histórico).
+        """
         await self._init_db()
         json_data = json.dumps(data)
         async with aiosqlite.connect(self.db_path) as db:
@@ -57,23 +66,44 @@ class SQLitePersistenceAdapter(PersistencePort):
             )
             await db.commit()
 
-    async def get_session(self, chat_id: str) -> Optional[Dict[str, Any]]:
-        """Recupera a sessão de um chat específico."""
+    async def get_session(self, chat_id: str) -> Optional[Tuple[Dict[str, Any], str]]:
+        """
+        Recupera a sessão de um chat e a data da última atualização.
+
+        Args:
+            chat_id (str): ID do chat do usuário.
+
+        Returns:
+            Optional[Tuple[Dict[str, Any], str]]: Tupla contendo os dados e o timestamp (UTC).
+        """
         await self._init_db()
         async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute('SELECT data FROM sessions WHERE chat_id = ?', (chat_id,)) as cursor:
+            async with db.execute('SELECT data, updated_at FROM sessions WHERE chat_id = ?', (chat_id,)) as cursor:
                 row = await cursor.fetchone()
-                if row: return json.loads(row[0])
+                if row:
+                    return json.loads(row[0]), row[1]
         return None
 
     async def clear_session(self, chat_id: str):
-        """Remove a sessão do banco."""
+        """
+        Deleta os dados de sessão de um chat específico.
+
+        Args:
+            chat_id (str): ID do chat a ser limpo.
+        """
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute('DELETE FROM sessions WHERE chat_id = ?', (chat_id,))
             await db.commit()
 
     async def save_preference(self, chat_id: str, key: str, value: str):
-        """Armazena uma preferência de usuário (ex: style, video_mode)."""
+        """
+        Armazena uma preferência personalizada de interface.
+
+        Args:
+            chat_id (str): ID do chat do usuário.
+            key (str): Chave da preferência (ex: 'style').
+            value (str): Valor da preferência (ex: 'curto').
+        """
         await self._init_db()
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
@@ -83,7 +113,16 @@ class SQLitePersistenceAdapter(PersistencePort):
             await db.commit()
 
     async def get_preference(self, chat_id: str, key: str) -> Optional[str]:
-        """Recupera uma preferência salva."""
+        """
+        Recupera uma preferência salva anteriormente.
+
+        Args:
+            chat_id (str): ID do chat do usuário.
+            key (str): Chave da preferência.
+
+        Returns:
+            Optional[str]: O valor salvo ou None se não existir.
+        """
         await self._init_db()
         async with aiosqlite.connect(self.db_path) as db:
             async with db.execute('SELECT value FROM preferences WHERE chat_id = ? AND key = ?', (chat_id, key)) as cursor:
@@ -92,7 +131,15 @@ class SQLitePersistenceAdapter(PersistencePort):
         return None
 
     async def has_accepted_terms(self, chat_id: str) -> bool:
-        """Verifica na tabela 'users' se o consentimento foi dado."""
+        """
+        Verifica se o usuário deu consentimento à política de privacidade.
+
+        Args:
+            chat_id (str): ID do chat do usuário.
+
+        Returns:
+            bool: True se aceito, False se pendente.
+        """
         await self._init_db()
         async with aiosqlite.connect(self.db_path) as db:
             async with db.execute('SELECT accepted_terms FROM users WHERE chat_id = ?', (chat_id,)) as cursor:
@@ -100,7 +147,12 @@ class SQLitePersistenceAdapter(PersistencePort):
                 return bool(row and row[0])
 
     async def accept_terms(self, chat_id: str):
-        """Registra o consentimento LGPD definitivo."""
+        """
+        Registra a aceitação dos termos no banco com timestamp.
+
+        Args:
+            chat_id (str): ID do chat do usuário.
+        """
         await self._init_db()
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(

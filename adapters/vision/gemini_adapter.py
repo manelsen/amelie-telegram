@@ -11,7 +11,8 @@ class GeminiAdapter(AIModelPort):
     Adaptador para os modelos Google Gemini utilizando o SDK google-genai.
     
     Gerencia o ciclo de vida de arquivos na File API e a geração de conteúdo
-    multimodal (imagem, vídeo, áudio e documentos).
+    multimodal (imagem, vídeo, áudio e documentos). Implementa retentativas
+    automáticas para resiliência de rede.
     """
 
     def __init__(self, api_key: str):
@@ -26,36 +27,36 @@ class GeminiAdapter(AIModelPort):
 
     async def upload_file(self, content_bytes: bytes, mime_type: str) -> str:
         """
-        Faz upload do conteúdo para a File API do Google e aguarda o processamento.
+        Faz upload do conteúdo para a File API do Google e aguarda o processamento 'ACTIVE'.
 
         Args:
-            content_bytes (bytes): Arquivo bruto.
-            mime_type (str): Tipo MIME do arquivo.
+            content_bytes (bytes): Conteúdo binário do arquivo.
+            mime_type (str): Tipo MIME do arquivo (ex: 'video/mp4').
 
         Returns:
-            str: URI do arquivo no servidor do Google.
+            str: URI do arquivo nos servidores do Google para uso em consultas.
 
         Raises:
-            PermanentAPIError: Se o upload ou o processamento remoto falharem.
+            PermanentAPIError: Se o upload falhar ou o processamento remoto for negado.
         """
         try:
             file_io = io.BytesIO(content_bytes)
             
-            # Upload usando cliente assíncrono
+            # Realiza o upload assíncrono para a File API
             file_metadata = await self.client.aio.files.upload(file=file_io, config={"mime_type": mime_type})
             
-            # Aguarda o arquivo ficar 'ACTIVE' (Polling)
+            # Loop de polling para aguardar o estado ACTIVE (Google processando frames/audio)
             while True:
                 f = await self.client.aio.files.get(name=file_metadata.name)
                 if f.state.name == "ACTIVE":
                     break
                 elif f.state.name == "FAILED":
-                    raise PermanentAPIError("O processamento do arquivo falhou no Google.")
+                    raise PermanentAPIError("O processamento do arquivo falhou nos servidores do Google.")
                 await asyncio.sleep(2)
             
             return file_metadata.uri
         except Exception as e:
-            raise PermanentAPIError(f"Erro no upload para a File API: {e}")
+            raise PermanentAPIError(f"Erro crítico no upload para a File API: {e}")
 
     @retry(
         stop=stop_after_attempt(3),
@@ -65,28 +66,29 @@ class GeminiAdapter(AIModelPort):
     )
     async def ask_about_file(self, file_uri: str, mime_type: str, prompt: str, history: list = None) -> str:
         """
-        Solicita ao Gemini uma análise sobre um arquivo referenciado por URI.
+        Solicita à IA uma análise sobre um arquivo referenciado via URI.
 
-        Inclui histórico de chat e instruções de sistema para acessibilidade.
-        A função utiliza retentativas automáticas para erros de rede ou cota.
+        Garante o envio do histórico de turnos para manter o contexto da conversa.
+        Utiliza retentativas exponenciais para erros de rede ou limites de cota.
 
         Args:
-            file_uri (str): URI do arquivo (gs:// ou https://).
-            mime_type (str): Tipo MIME para contexto do modelo.
-            prompt (str): Pergunta ou instrução do usuário.
-            history (list, optional): Histórico de turnos da conversa.
+            file_uri (str): URI do arquivo (geralmente gerada pelo método upload_file).
+            mime_type (str): Tipo MIME do arquivo para orientação do modelo.
+            prompt (str): A pergunta ou instrução atual do usuário.
+            history (list, optional): Lista de dicionários {'role', 'parts'} do histórico.
 
         Returns:
-            str: Resposta textual da IA em português.
+            str: Resposta gerada pela IA em linguagem natural.
 
         Raises:
-            transientAPIError: Erros de rede ou limite de cota (429).
-            PermanentAPIError: Erros de autenticação ou configuração (404/401).
+            transientAPIError: Erros temporários (HTTP 429, 500, timeouts).
+            PermanentAPIError: Erros fatais (401 Unauthorized, 404 Not Found).
         """
         try:
             file_part = types.Part.from_uri(file_uri=file_uri, mime_type=mime_type)
             
             messages = []
+            # Reconstrói o histórico para o formato esperado pelo SDK
             if history:
                 for entry in history:
                     messages.append(types.Content(
@@ -94,35 +96,41 @@ class GeminiAdapter(AIModelPort):
                         parts=[types.Part.from_text(text=p) for p in entry["parts"]]
                     ))
 
-            # Adiciona o arquivo apenas no último turno junto com o prompt atual
+            # Turno atual: Acopla o arquivo à instrução para garantir foco visual
             messages.append(types.Content(
                 role="user", 
                 parts=[file_part, types.Part.from_text(text=prompt)]
             ))
             
+            # Chamada assíncrona para geração de conteúdo multimodal
             response = await self.client.aio.models.generate_content(
                 model=self.model_name,
                 contents=messages,
                 config=types.GenerateContentConfig(
-                    system_instruction="Seu nome é Amélie. Você é uma assistente de audiodescrição e análise rigorosa para pessoas cegas. Responda sempre em português, texto puro, sem markdown ou asteriscos. Foque nos detalhes visuais do arquivo enviado."
+                    system_instruction=(
+                        "Seu nome é Amélie. Você é uma assistente de audiodescrição e análise "
+                        "rigorosa para pessoas cegas. Responda sempre em português, texto puro, "
+                        "sem markdown ou asteriscos. Foque nos detalhes visuais e contextuais."
+                    )
                 )
             )
             return response.text
         except Exception as e:
             err_str = str(e).lower()
             if "quota" in err_str or "rate limit" in err_str:
-                raise transientAPIError(f"Erro de cota na API: {e}")
-            raise PermanentAPIError(f"Erro na geração de conteúdo: {e}")
+                raise transientAPIError(f"Limite de cota atingido: {e}")
+            raise PermanentAPIError(f"Erro fatal na geração de conteúdo: {e}")
 
     async def delete_file(self, file_uri: str):
         """
-        Remove o arquivo da infraestrutura do Google.
+        Remove permanentemente o arquivo do cache do provedor Google.
 
         Args:
-            file_uri (str): URI completa do arquivo.
+            file_uri (str): URI completa do arquivo a ser deletado.
         """
         try:
+            # Extrai o ID do arquivo (slug final da URI)
             file_id = file_uri.split('/')[-1]
             await self.client.aio.files.delete(name=file_id)
         except:
-            pass
+            pass # Silencia erros na deleção para evitar interrupção do fluxo principal
