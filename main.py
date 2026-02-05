@@ -51,7 +51,7 @@ def main():
     service = VisionService(ai_model=ai_model, security=security, persistence=persistence)
     bot = TelegramAdapter(token=TELEGRAM_TOKEN, vision_service=service)
 
-    logger.info("Amélie está acordando...")
+    logger.info("Amélie (amelie-telegram) está acordando...")
     
     # Registra os handlers
     bot.start()

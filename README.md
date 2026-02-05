@@ -1,4 +1,4 @@
-# Amélie 👁️🌸
+# Amélie 👁️🌸 (amelie-telegram)
 
 A **Amélie** é uma assistente multimodal de audiodescrição desenvolvida para promover a acessibilidade de pessoas com deficiência visual. Utilizando a inteligência do Google Gemini, ela transforma fotos, vídeos, áudios e documentos em descrições detalhadas e acessíveis via Telegram.
 
@@ -15,8 +15,8 @@ A forma mais simples e recomendada de rodar a Amélie é utilizando Docker.
 
 1. **Clone o repositório:**
    ```bash
-   git clone https://github.com/seu-usuario/vision-bot.git
-   cd vision-bot
+   git clone https://github.com/manelsen/amelie-telegram.git
+   cd amelie-telegram
    ```
 
 2. **Configure as variáveis de ambiente:**

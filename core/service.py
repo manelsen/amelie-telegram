@@ -82,6 +82,9 @@ class VisionService:
         Returns:
             str: Texto limpo e linear para melhor acessibilidade.
         """
+        if text is None:
+            return "Desculpe, não consegui gerar uma descrição para este arquivo."
+            
         text = text.replace("*", "").replace("#", "").replace("_", " ").replace("`", "")
         text = re.sub(r' +', ' ', text)
         return text.strip()
